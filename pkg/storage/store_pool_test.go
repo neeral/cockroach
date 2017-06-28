@@ -563,3 +563,63 @@ func TestGetLocalities(t *testing.T) {
 		}
 	}
 }
+
+func TestStorePoolHasNoReplicas(t *testing.T) {
+	defer leaktest.AfterTest(t)
+	stopper, g, _, sp, _ := createTestStorePool(
+		TestTimeUntilStoreDead, false /* deterministic */, nodeStatusDead)
+	defer stopper.Stop(context.TODO())
+	sg := gossiputil.NewStoreGossiper(g)
+
+	// node 1 has 1 store with replicas
+	// node 2 has 2 stores, one with and one without replicas
+	// node 3 has 1 store with no replicas
+	// node 4 has no stores
+	createNodeDesc := func(nodeID int) roachpb.NodeDescriptor {
+		return roachpb.NodeDescriptor{
+			NodeID: roachpb.NodeID(nodeID),
+		}
+	}
+	createCapacity := func(rangeCount int32) roachpb.StoreCapacity {
+		return roachpb.StoreCapacity{
+			RangeCount: rangeCount,
+		}
+	}
+	stores := []*roachpb.StoreDescriptor{
+		{
+			StoreID:  1,
+			Node:     createNodeDesc(1),
+			Capacity: createCapacity(1),
+		},
+		{
+			StoreID:  2,
+			Node:     createNodeDesc(2),
+			Capacity: createCapacity(0),
+		},
+		{
+			StoreID:  3,
+			Node:     createNodeDesc(3),
+			Capacity: createCapacity(0),
+		},
+		{
+			StoreID:  4,
+			Node:     createNodeDesc(2),
+			Capacity: createCapacity(2),
+		},
+	}
+
+	sg.GossipStores(stores, t)
+
+	if sp.hasNoReplicas(roachpb.NodeID(1)) {
+		t.Fatalf("node 1 has one store with ranges but got it has no replicas")
+	}
+	if sp.hasNoReplicas(roachpb.NodeID(2)) {
+		t.Fatalf("node 2 has a store with ranges but got all its have no replicas")
+	}
+	if !sp.hasNoReplicas(roachpb.NodeID(3)) {
+		t.Fatalf("node 3 has one store with no ranges but got it has replicas")
+	}
+	if !sp.hasNoReplicas(roachpb.NodeID(4)) {
+		t.Fatalf("node 4 has no stores but got it has replicas")
+	}
+}

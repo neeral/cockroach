@@ -616,3 +616,18 @@ func (sp *StorePool) getNodeLocalityString(nodeID roachpb.NodeID) string {
 	}
 	return locality.str
 }
+
+// hasNoReplicas returns true if nodeID is storing 0 replicas
+func (sp *StorePool) hasNoReplicas(nodeID roachpb.NodeID) bool {
+	sp.detailsMu.Lock()
+	defer sp.detailsMu.Unlock()
+	for _, detail := range sp.detailsMu.storeDetails {
+		if detail.desc.Node.NodeID != nodeID {
+			continue
+		}
+		if detail.desc.Capacity.RangeCount > 0 {
+			return false
+		}
+	}
+	return true
+}
