@@ -579,3 +579,57 @@ func TestHeartbeatCallbackForDecommissioning(t *testing.T) {
 		return nil
 	})
 }
+
+func TestIsDecommissioned(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	s, _, _ := serverutils.StartServer(t, base.TestServerArgs{})
+	defer s.Stopper().Stop(context.TODO())
+	ts := s.(*TestServer)
+	nodeLiveness := ts.nodeLiveness
+	ctx := context.Background()
+
+	// Wait for liveness record to be created.
+	for {
+		if _, err := nodeLiveness.Self(); err != nil {
+			if errors.Cause(err) == storage.ErrNoLivenessRecord {
+				continue
+			}
+			t.Fatal(err)
+		}
+		break
+	}
+
+	verifyNodeIsDecommissioned := func(decommissioning bool, expected bool, msg string) {
+		// Node should realize it is decommissioning after next heartbeat update.
+		testutils.SucceedsSoon(t, func() error {
+			nodeLiveness.PauseHeartbeat(false) // trigger immediate heartbeat
+			if liveness, err := nodeLiveness.Self(); err != nil {
+				// Record must exist at this point, so any error is fatal now.
+				t.Fatal(err)
+			} else if liveness.Decommissioning != decommissioning {
+				return errors.Errorf("not decommissioning")
+			} else if liveness.Draining != decommissioning {
+				return errors.Errorf("not draining")
+			}
+			return nil
+		})
+		if is, err := ts.isDecommissioned(ts.nodeIDContainer.Get()); err != nil {
+			t.Fatal(err)
+		} else if is != expected {
+			t.Fatal(msg)
+		}
+	}
+
+	nodeLiveness.SetDecommissioning(ctx, ts.nodeIDContainer.Get(), false)
+	verifyNodeIsDecommissioned(false, false, "not in decomissioning state but is decommissioned")
+
+	nodeLiveness.SetDecommissioning(ctx, ts.nodeIDContainer.Get(), true)
+	verifyNodeIsDecommissioned(true, false, "in decomissioning state and has replicas but is decommissioned")
+
+	if _, err := ts.isDecommissioned(roachpb.NodeID(2)); err == nil {
+		t.Fatal("node does not exist but did not get error")
+	}
+
+	// TODO: remove replicas from stores
+	verifyNodeIsDecommissioned(true, true, "in decomissioning state and has no stores but is not decommissioned")
+}

@@ -1034,6 +1034,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
+func (s *Server) isDecommissioned(nodeID roachpb.NodeID) (bool, error) {
+	ctx := s.AnnotateCtx(context.Background())
+	if liveness, err := s.nodeLiveness.GetLiveness(nodeID); err != nil {
+		err = errors.Wrapf(err, "retrieving liveness record for %v", nodeID)
+		log.Warning(ctx, err)
+		return false, err
+	} else if !liveness.Decommissioning {
+		log.Info(ctx, "liveness.Decommissioning set")
+		return false, nil
+	}
+	log.Infof(ctx, "Does it have no replicas? %v", s.storePool.HasNoReplicas(nodeID))
+	return s.storePool.HasNoReplicas(nodeID), nil
+}
+
 type gzipResponseWriter struct {
 	io.WriteCloser
 	http.ResponseWriter
